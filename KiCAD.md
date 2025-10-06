@@ -1,17 +1,24 @@
 <div align="center">
 
-# KiCad PCB Design 
-### Design of transmiiter for the flight controller using KiCAD ![alt text](media/kicad_logo.png)
+# KiCad PCB Design
+### Design of Transmitter for the Flight Controller using KiCad
+
+<img src="media/kicad_logo.png" alt="KiCad Logo" width="200"/>
 
 </div>
 
-## To desing a custon Symbol
-1. Symbol is a representation of a component.
-2. It dosen't reflect the dimensions of the component.
-3. It should have every pin names.
+---
 
-### Steps to create a custom symbol in KiCAD
-1. Open KiCAD.
-2. Open Symbol editor.
+## To Design a Custom Symbol
 
-![alt text](media/Screenshot1.png)
+1. A **symbol** is a representation of a component.  
+2. It doesn’t reflect the physical **dimensions** of the component.  
+3. It should have **all pin names** clearly labeled.
+
+### Steps to Create a Custom Symbol in KiCad
+
+1. Open **KiCad**.  
+2. Go to the **Symbol Editor**.
+
+<img src="media/Screenshot1.png" alt="KiCad Symbol Editor" width="500"/>
+
