@@ -13,6 +13,5 @@
 ### Steps to create a custom symbol in KiCAD
 1. Open KiCAD.
 2. Open Symbol editor.
-<i >
+
 ![alt text](media/Screenshot1.png)
-</i>
