@@ -59,7 +59,7 @@
 8. Choose **Draw Rectangle** to create the symbol layout.  
 
 <p align="center">
-  <img src="media/Screenshot6.png" alt="Draw Rectangle" width="250"/>
+  <img src="media/Screenshot6.png" alt="Draw Rectangle" width="100"/>
 </p>
 
 9. Draw the symbol layout to include all pin names.  
@@ -67,3 +67,5 @@
 <p align="center">
   <img src="media/Screenshot7.png" alt="Draw Symbol Layout" width="400"/>
 </p>
+
+10. 
