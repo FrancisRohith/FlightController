@@ -1,18 +1,14 @@
 #include <Wire.h> 
 #include "MPU6050.h"
-#include <RF24.h>
-#include <SPI.h>
-#include <nRF24L01.h>
-#include <RF24.h>
 
-bool level_calibration_on = false;
-bool set_gyro = false;
+boolean level_calibration_on = false;
+boolean auto_level = false;
 
 float Kp_roll = 0;
 float Ki_roll = 0;
 float Kd_roll = 0;
 int roll_max = 400;
-
+int8_t temp;
 float Kp_pitch = Kp_roll;
 float Ki_pitch = Ki_roll;
 float kd_pitch = Kd_roll;
@@ -26,8 +22,26 @@ int yaw_max = 400;
 int16_t manual_takeoff_channel_3 = 0;
 int16_t idle_speed = 0;
 
+uint8_t led, start;
+uint8_t error, error_counter, error_led;
+
 int16_t esc_1, esc_2, esc_3, esc_4;
 int16_t throttle;
+int16_t i;
+
+
+// Channel 1 - Right horizontal - Roll
+// Channel 2 - Right vertical - Pitch
+// Channel 3 - Left verticcal - Throttle
+// Channel 4 - Left horizontal - Yaw
+int32_t channel_1_start, channel_1;
+int32_t channel_2_start, channel_2;
+int32_t channel_3_start, channel_3;
+int32_t channel_4_start, channel_4;
+int32_t channel_5_start, channel_5;
+int32_t channel_6_start, channel_6;
+
+uint32_t error_timer;
 
 int16_t acc_x, acc_y, acc_z;
 int16_t temperature;
@@ -52,46 +66,103 @@ uint32_t last_rx_time = 0;
 uint32_t acc_total;
 
 float roll_level_adjust, pitch_level_adjust;
-float error;
 float I_roll, roll_setpoint, gyro_roll_in, pid_roll, prev_roll_error;
 float I_pitch, pitch_setpoint, gyro_pitch_in, pid_pitch, prev_pitch_error; 
 float I_yaw, yaw_setpoint, gyro_yaw_in, pid_yaw, prev_yaw_error;
 
-const byte addressA[6] = "00001";
-const byte addressB[6] = "00011";
-
-struct Transmitter {
-  float roll;
-  float pitch;
-  float yaw;
-};
-
-struct Receiver {
-  uint16_t channel_3;
-};
-
-Transmitter Tx;
-Receiver Rx;
-RF24 radio(PB0, PA4); // PB0 = CE, PA4 = CSN
-
 void setup() {
+  pinMode(PA4, INPUT_ANALOG); // for battery voltage measurement
+  
+  Serial.begin(115200);     // high baud rate to reduce loop time since loop time should execute within 4ms
+  Serial.println("start");
   // put your setup code here, to run once:
   afio_cfg_debug_ports(AFIO_DEBUG_SW_ONLY);
-  Serial.begin(115200);     // high baud rate to reduce loop time since loop time should execute within 4ms
-  ESC_setup();
+
+  pinMode(PB3, INPUT);
+  pinMode(PB4, INPUT);
+
+  if(digitalRead(PB3) || digitalRead(PB4)) led=1;
+  else led=0;
+
+  pinMode(PB3, OUTPUT);
+  pinMode(PB4, OUTPUT);
+
+  green_led(LOW);
+  red_led(HIGH);
+
+  timer_setup();
   delay(50);
+
+  Wire.begin();
+  Wire.beginTransmission(MPU_ADDR);
+  error = Wire.endTransmission();
+  
+  while (error != 0) {
+    error = 2;
+    error_signal();
+    Serial.println("MPU not connected");
+    delay(4);
+  }
   gyro_setup();
-  nRF_setup();
+  
   if(!manual_calibration) {
-    delay(5000);
+    for(i=0; i < 1250; i++) {
+      if (i%125 == 0) digitalWrite(PB4, !digitalRead(PB4));
+      delay(4);
+    }
+    i = 0;
   }
   
   calibrate_gyro();
+
+  // when receiver is not connected any one of the channel will be low
+  // So raise error signal and wait till receiver is connected
+  while (channel_1 < 990 || channel_2 < 990 || channel_3 < 990 || channel_4 < 990) {
+    Serial.print(channel_1);
+    Serial.print("\t");
+    Serial.print(channel_2);
+    Serial.print("\t");
+    Serial.print(channel_3);
+    Serial.print("\t");
+    Serial.print(channel_4);
+    Serial.print(" ");
+    error = 3;
+    error_signal();
+    delay(4);
+    Serial.println(F("Channel not connected"));
+  }
+  error = 0;
+
+  // wait till throttle is in lower position
+  while (channel_3 < 990 || channel_3 > 1050) {
+    error = 4;
+    error_signal();
+    delay(4);
+    Serial.println(F("Throttle not lowered"));
+  }
+  error = 0;
+
+  // Setup completed turn off red led
+  red_led(LOW);
+  
+  Serial.println("Setup Finish");
+  temp=0;
+  ESC_setup();
   loop_timer = micros();
+
+  // Turn on green led to start
+  green_led(HIGH);
+  
 }
 
 void loop() {
-  read_gyro();  
+  error_signal();
+  read_gyro(); 
+
+  if(temp==0) {
+    Serial.println("loop started");
+    temp = 1;
+  }
   
   gyro_roll_in = (gyro_roll_in * 0.7) + (((float)gyro_roll / 65.5) * 0.3);  // in deg/s
   gyro_pitch_in = (gyro_pitch_in * 0.7) + (((float)gyro_pitch / 65.5) * 0.3);
@@ -121,94 +192,104 @@ void loop() {
     acc_roll -= -0.4;
   }
 
-  if (set_gyro) {
-    // to reduce drift small part of noisy acc is added to gyro
-    roll = roll*0.9996 + acc_roll*0.0004;
-    pitch = pitch*0.9996 + acc_pitch*0.0004;
-  } else {
-    // Initially if MPU is inclined it cant be detected by gyro so use
-    // acclerometer for initial angle;
-    roll=acc_roll;
-    pitch=acc_pitch;
-    I_pitch = 0;
-    prev_pitch_error = 0;
-    I_roll = 0;
-    prev_roll_error = 0;
-    I_yaw = 0;
-    prev_yaw_error = 0;
-    set_gyro=true;
-  }
+  // to reduce drift of gyro small part of noisy acc is added to gyro
+  roll = roll*0.9996 + acc_roll*0.0004;
+  pitch = pitch*0.9996 + acc_pitch*0.0004;
 
   pitch_level_adjust = pitch * 15;
   roll_level_adjust = roll * 15;
 
-  roll_setpoint = 0;
+  if (!auto_level) {
+    pitch_level_adjust = 0;
+    roll_level_adjust = 0;    
+  } 
+
+  // for starting throttle low and yaw left for step 1
+  if (channel_3 < 1050 && channel_4 < 1050) {
+    start = 1;
+    Serial.println(F("Start 1"));
+  }
+
+  // after step 1 center the yaw to start motors for step 2
+  if(start == 1 && channel_3 < 1050 && channel_4 > 1450) {
+    start = 2;
+    Serial.println(F("Start 2"));
+    green_led(LOW);
+    pitch = acc_pitch;
+    roll = acc_roll;
+
+    I_roll = 0;
+    prev_roll_error = 0;
+    I_pitch = 0;
+    prev_pitch_error = 0;
+    I_yaw = 0;
+    prev_yaw_error = 0;
+  }
+
+  // to stop motor throlle low and yaw right
+  if (start == 2 && channel_3 < 1050 && channel_4 > 1950) {
+    start = 0;
+    green_led(HIGH);
+  }
+
+  roll_setpoint = 0; 
   roll_setpoint -= roll_level_adjust;
-  roll_setpoint /= 3.0;
+  // Divide the channel pulse by 3 to get the degree of rotation
+  // In the case of deviding by 3 the max roll rate is aprox 164 degrees per second ( (500-8)/3 = 164d/s )
+  roll_setpoint /= 3.0;               
 
   pitch_setpoint = 0;
   pitch_setpoint -= pitch_level_adjust;
-  pitch_setpoint /= 3.0;
+  // Divide the channel pulse by 3 to get the degree of rotation
+  // In the case of deviding by 3 the max pitch rate is aprox 164 degrees per second ( (500-8)/3 = 164d/s )
+  pitch_setpoint /= 3.0;              
 
   yaw_setpoint = 0;
 
-  Tx.roll = roll;
-  Tx.pitch = pitch;
-  Tx.yaw = yaw;
-  if(radio.available()) {    
-    digitalWrite(PC13, LOW);
-    while (radio.available()) {
-      radio.read(&Rx, sizeof(Rx));\
-      throttle = Rx.channel_3;
-      last_rx_time = micros();
-    }
-    radio.stopListening();
-    radio.write(&Tx, sizeof(Tx));    
-    radio.startListening();
-  } 
+  calculate_pid();
 
-  if(Serial.available()) {
-    char c = Serial.read();
-    if(c == 't') transmit_data();
+  throttle = channel_3;
+
+  transmit_data();
+
+  if (start == 2) {
+    if (throttle > 1800) throttle = 1800;                     //We need some room to keep full control at full throttle.
+    
+    esc_1 = throttle - pid_pitch - pid_roll + pid_yaw;        //Calculate the pulse for esc 1 (front-left - CW).
+    esc_2 = throttle - pid_pitch + pid_roll - pid_yaw;        //Calculate the pulse for esc 2 (front-right - CCW).
+    esc_3 = throttle + pid_pitch - pid_roll - pid_yaw;        //Calculate the pulse for esc 3 (rear-left - CCW).
+    esc_4 = throttle + pid_pitch + pid_roll + pid_yaw;        //Calculate the pulse for esc 4 (rear-right - CW).
+
+    // esc_1 = throttle - pid_pitch + pid_roll - pid_yaw;        //Calculate the pulse for esc 1 (front-right - CCW).
+    // esc_2 = throttle + pid_pitch + pid_roll + pid_yaw;        //Calculate the pulse for esc 2 (rear-right - CW).
+    // esc_3 = throttle + pid_pitch - pid_roll - pid_yaw;        //Calculate the pulse for esc 3 (rear-left - CCW).
+    // esc_4 = throttle - pid_pitch - pid_roll + pid_yaw;        //Calculate the pulse for esc 4 (front-left - CW).
+
+
+
+    if (esc_1 < 1100) esc_1 = 1000;                           
+    if (esc_2 < 1100) esc_2 = 1000;                           
+    if (esc_3 < 1100) esc_3 = 1000;                           
+    if (esc_4 < 1100) esc_4 = 1000;                           
+
+    if (esc_1 > 2000) esc_1 = 2000;                              //Limit the esc-1 pulse to 1500us.
+    if (esc_2 > 2000) esc_2 = 2000;                              //Limit the esc-2 pulse to 1500us.
+    if (esc_3 > 2000) esc_3 = 2000;                              //Limit the esc-3 pulse to 1500us.
+    if (esc_4 > 2000) esc_4 = 2000;                              //Limit the esc-4 pulse to 1500us.
+  }
+  else {
+    esc_1 = 1000;
+    esc_2 = 1000;
+    esc_3 = 1000;
+    esc_4 = 1000;
   }
 
-  pid();
+  TIMER3_BASE->CCR1 = esc_1;                                                       //Set the throttle receiver input pulse to the ESC 1 output pulse.
+  TIMER3_BASE->CCR2 = esc_2;                                                       //Set the throttle receiver input pulse to the ESC 2 output pulse.
+  TIMER3_BASE->CCR3 = esc_3;                                                       //Set the throttle receiver input pulse to the ESC 3 output pulse.
+  TIMER3_BASE->CCR4 = esc_4;                                                       //Set the throttle receiver input pulse to the ESC 4 output pulse.
 
-  if (throttle > 1300) throttle = 1300;                                          //We need some room to keep full control at full throttle.
-  esc_1 = throttle - pid_pitch + pid_roll - pid_yaw;        //Calculate the pulse for esc 1 (front-right - CCW).
-  esc_2 = throttle + pid_pitch + pid_roll + pid_yaw;        //Calculate the pulse for esc 2 (rear-right - CW).
-  esc_3 = throttle + pid_pitch - pid_roll - pid_yaw;        //Calculate the pulse for esc 3 (rear-left - CCW).
-  esc_4 = throttle - pid_pitch - pid_roll + pid_yaw;        //Calculate the pulse for esc 4 (front-left - CW).
-
-  if (esc_1 < 1000) esc_1 = 1000;                                                //Keep the motors running.
-  if (esc_2 < 1000) esc_2 = 1000;                                                //Keep the motors running.
-  if (esc_3 < 1000) esc_3 = 1000;                                                //Keep the motors running.
-  if (esc_4 < 1000) esc_4 = 1000;                                                //Keep the motors running.
-
-  if (esc_1 > 1500)esc_1 = 1500;                                                 //Limit the esc-1 pulse to 1500us.
-  if (esc_2 > 1500)esc_2 = 1500;                                                 //Limit the esc-2 pulse to 1500us.
-  if (esc_3 > 1500)esc_3 = 1500;                                                 //Limit the esc-3 pulse to 1500us.
-  if (esc_4 > 1500)esc_4 = 1500;                                                 //Limit the esc-4 pulse to 1500us.
-
-  TIMER2_BASE->CCR1 = esc_1;                                                       //Set the throttle receiver input pulse to the ESC 1 output pulse.
-  TIMER2_BASE->CCR2 = esc_2;                                                       //Set the throttle receiver input pulse to the ESC 2 output pulse.
-  TIMER2_BASE->CCR3 = esc_3;                                                       //Set the throttle receiver input pulse to the ESC 3 output pulse.
-  TIMER2_BASE->CCR4 = esc_4;                                                       //Set the throttle receiver input pulse to the ESC 4 output pulse.
-
-  if (micros() - last_rx_time > 500000) {
-    Serial.println("last_rx_time exceeded");
-    throttle = 1000;
-    digitalWrite(PC13, HIGH);
-    TIMER2_BASE->CCR1 = 1000;                                                       //Set the throttle receiver input pulse to the ESC 1 output pulse.
-    TIMER2_BASE->CCR2 = 1000;                                                       //Set the throttle receiver input pulse to the ESC 2 output pulse.
-    TIMER2_BASE->CCR3 = 1000;                                                       //Set the throttle receiver input pulse to the ESC 3 output pulse.
-    TIMER2_BASE->CCR4 = 1000;                                                       //Set the throttle receiver input pulse to the ESC 4 output pulse.
-  }  
-//  print_angle();
-  if (micros()-loop_timer > 4050){ 
-    Serial.println("Loop time exceeded ");
-  }
+  if (micros()-loop_timer > 4050) error = 5;
   while(micros()-loop_timer < 4000);      // loop timer is set to previous loop timing (curr_time-prev_time<4000us)
   loop_timer = micros();       // micros() gives time in us
-
 }

@@ -1,8 +1,8 @@
 /*
 PIN CONNECTION
 VCC_IN - 3v3
-SCL - PB6
-SDA - PB7
+SCL - PB10
+SDA - PB11
 */ 
 ////////////ABOUT ACCELEROMETER AND GYRO///////////
 // Accelerometer are less sensitive to drift but highly sensitive to vibration
@@ -70,13 +70,6 @@ void read_gyro() {
 //In this part the various registers of the MPU-6050 are set.
 void gyro_setup() {
   Wire.setClock(400000); // Set the clock speed of I2C to 400KHz
-  Wire.begin();
-  delay(250);
-  Wire.beginTransmission(MPU_ADDR);
-  if (Wire.endTransmission()!=0){
-    Serial.println("No MPU6050");
-    while(1);
-  }
   Wire.beginTransmission(MPU_ADDR);   // (0x68 << 1) + W/R -> 0/1
   Wire.write(PWR_MGMT_1); // target register address is PWR_MNGT_1
   Wire.write(0x00);       // reset all bit to start device and continue in power mode

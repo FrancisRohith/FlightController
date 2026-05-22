@@ -1,4 +1,4 @@
-void pid(void) {
+void calculate_pid(void) {
   // Roll PID
   error = gyro_roll_in - roll_setpoint;
   I_roll += Ki_roll * error;
