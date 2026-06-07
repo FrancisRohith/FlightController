@@ -21,25 +21,25 @@ void calibrate_gyro() {
     manual_gyro_yaw_cal = 0;
   }
 
-  if (cal_int != 2000) {
-    cal_gyro_roll = 0;
-    cal_gyro_pitch = 0;
-    cal_gyro_yaw = 0;
+  if (cal_int == 0) {
+    gyro_axis_cal[1] = 0;
+    gyro_axis_cal[2] = 0;
+    gyro_axis_cal[3] = 0;
     Serial.println("Calibrating the gyro...");
     for(cal_int=0; cal_int < 2000; cal_int++) {
     //  if (cal_int%25 == 0) digitalWrite(PB4, !digitalRead(PB4));  
       read_gyro();
-      cal_gyro_roll += gyro_roll;         // as gyro gives angular velocity (rad/s) integrate to get angular position
-      cal_gyro_pitch += gyro_pitch;
-      cal_gyro_yaw += gyro_yaw;
+      gyro_axis_cal[1] += gyro_axis[1];         // as gyro gives angular velocity (rad/s) integrate to get angular position
+      gyro_axis_cal[2] += gyro_axis[2];
+      gyro_axis_cal[3] += gyro_axis[3];
       delay(4);
     }
-    cal_gyro_roll /= 2000;
-    cal_gyro_pitch /= 2000;
-    cal_gyro_yaw /= 2000;
-    manual_gyro_roll_cal = cal_gyro_roll;
-    manual_gyro_pitch_cal = cal_gyro_pitch;
-    manual_gyro_yaw_cal = cal_gyro_yaw;
+    gyro_axis_cal[1] /= 2000;
+    gyro_axis_cal[2] /= 2000;
+    gyro_axis_cal[3] /= 2000;
+    manual_gyro_roll_cal = gyro_axis_cal[1];
+    manual_gyro_pitch_cal = gyro_axis_cal[2];    
+    manual_gyro_yaw_cal = gyro_axis_cal[3];
   }
 }
 
@@ -47,29 +47,30 @@ void calibrate_gyro() {
 void read_gyro() {
   Wire.beginTransmission(MPU_ADDR);
   Wire.write(ACCEL_XOUT_H);
-  Wire.endTransmission(false);
+  Wire.endTransmission();
   Wire.requestFrom(MPU_ADDR, 14);
 
-  acc_x = Wire.read() << 8 | Wire.read();
-  acc_y = Wire.read() << 8 | Wire.read();
-  acc_z = Wire.read() << 8 | Wire.read();
+  acc_axis[1] = Wire.read() << 8 | Wire.read();
+  acc_axis[2] = Wire.read() << 8 | Wire.read();
+  acc_axis[3] = Wire.read() << 8 | Wire.read();
   temperature = Wire.read() << 8 | Wire.read();
-  gyro_roll = Wire.read() << 8 | Wire.read();
-  gyro_pitch = Wire.read() << 8 | Wire.read();
-  gyro_yaw = Wire.read() << 8 | Wire.read();
-  gyro_pitch *= -1;
-  gyro_yaw *= -1;
+  gyro_axis[1] = Wire.read() << 8 | Wire.read();
+  gyro_axis[2] = Wire.read() << 8 | Wire.read();
+  gyro_axis[3] = Wire.read() << 8 | Wire.read();
   
-  acc_x -= manual_acc_pitch_cal;
-  acc_y -= manual_acc_roll_cal;
-  gyro_roll -= manual_gyro_roll_cal;
-  gyro_pitch -= manual_gyro_pitch_cal;
-  gyro_yaw -= manual_gyro_yaw_cal;
+  gyro_axis[2] *= -1;
+  gyro_axis[3] *= -1;
+  
+  acc_axis[1] -= manual_acc_pitch_cal;
+  acc_axis[2] -= manual_acc_roll_cal;
+  gyro_axis[1] -= manual_gyro_roll_cal;
+  gyro_axis[2] -= manual_gyro_pitch_cal;
+  gyro_axis[3] -= manual_gyro_yaw_cal;
 }
 
 //In this part the various registers of the MPU-6050 are set.
 void gyro_setup() {
-  Wire.setClock(400000); // Set the clock speed of I2C to 400KHz
+  Wire.setClock(200000); // Set the clock speed of I2C to 400KHz
   Wire.beginTransmission(MPU_ADDR);   // (0x68 << 1) + W/R -> 0/1
   Wire.write(PWR_MGMT_1); // target register address is PWR_MNGT_1
   Wire.write(0x00);       // reset all bit to start device and continue in power mode
@@ -91,8 +92,43 @@ void gyro_setup() {
   Wire.endTransmission(true);
 }
 
-void print_angle() {
-  Serial.print(" Roll: "); Serial.print(roll);
-  Serial.print(" Pitch: "); Serial.print(pitch);
-  Serial.print(" Yaw: "); Serial.println(yaw);
+void manual_imu_calibration() {
+  gyro_axis_cal[1] = 0;                                                             //Reset calibration variables for next calibration.
+  gyro_axis_cal[2] = 0;                                                             //Reset calibration variables for next calibration.
+  gyro_axis_cal[3] = 0; 
+  acc_axis_cal[1] = 0; 
+  acc_axis_cal[2] = 0; 
+  Serial.print("Calibrating gyro");
+  for(cal_int = 0; cal_int < 4000; cal_int++) {
+    read_gyro();
+    acc_axis_cal[1] += acc_axis[1];
+    acc_axis_cal[2] += acc_axis[2];
+    gyro_axis_cal[1] += gyro_axis[1];                                              
+    gyro_axis_cal[2] += gyro_axis[2];                                              
+    gyro_axis_cal[3] += gyro_axis[3];  
+    Serial.print(cal_int);
+    Serial.print(". ");
+    Serial.print(acc_axis_cal[1]); 
+    Serial.print(" ");
+    Serial.print(acc_axis_cal[2]);
+    Serial.print(" ");
+    Serial.println(gyro_axis_cal[2]);
+    delay(4);
+  }
+  acc_axis_cal[1] /= 4000;
+  acc_axis_cal[2] /= 4000;
+  gyro_axis_cal[1] /= 4000;
+  gyro_axis_cal[2] /= 4000;
+  gyro_axis_cal[3] /= 4000;
+  Serial.print("manual_acc_pitch_cal_value = ");
+  Serial.println(acc_axis_cal[1]);
+  Serial.print("manual_acc_roll_cal_value = ");
+  Serial.println(acc_axis_cal[2]);
+  Serial.print("manual_gyro_pitch_cal_value = ");
+  Serial.println(gyro_axis_cal[1]);
+  Serial.print("manual_gyro_roll_cal_value = ");
+  Serial.println(gyro_axis_cal[2]);
+  Serial.print("manual_gyro_yaw_cal_value = ");
+  Serial.println(gyro_axis_cal[3]);
 }
+

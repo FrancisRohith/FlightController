@@ -34,8 +34,8 @@ void error_signal() {
 //        error_counter = 0
 
 void red_led(int8_t level) {
-  if (led) digitalWrite(PB4, !level);
-  else digitalWrite(PB4, level);
+  if (led) digitalWrite(PB4,level);
+  else digitalWrite(PB4, !level);
 }
 
 void green_led(int8_t level) {
